@@ -1,0 +1,10 @@
+# conda env create -f environment.yml && conda activate k4a
+# Install the Azure Kinect Sensor SDK (libk4a1.4-dev) first; pyk4a builds against it. See README 2.1.
+name: k4a
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - -r requirements.txt

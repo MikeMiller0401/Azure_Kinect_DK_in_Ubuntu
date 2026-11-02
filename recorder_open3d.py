@@ -1,7 +1,21 @@
+"""
+Record an Azure Kinect MKV with Open3D (no IMU CSV).
+使用 Open3D 录制 Azure Kinect MKV（不导出 IMU）。
+
+  python recorder_open3d.py -n wet_open3d -c 720p_NFOV_UNBINNED --duration 10
+"""
+import argparse
 import open3d as o3d
 import time
 import os
 import json
+
+def resolve_config(name_or_path):
+    """Accept a preset name under config/ or a path to a JSON file."""
+    if os.path.isfile(name_or_path):
+        return name_or_path
+    return os.path.join("config", name_or_path + ".json")
+
 
 def init_config(config_path):
     # Load Azure Kinect Sensor Config
@@ -31,7 +45,7 @@ def init_recorder(config):
     recorder.init_sensor()
     return recorder
 
-def record(recorder, video_name, fps):
+def record(recorder, video_name, fps, duration=None):
     os.makedirs("video", exist_ok=True)
     mkv_path = os.path.join("video", video_name + ".mkv")
     if not recorder.open_record(mkv_path):
@@ -39,14 +53,15 @@ def record(recorder, video_name, fps):
     TARGET_FPS = fps
     FRAME_DURATION = 1.0 / TARGET_FPS
     print('='*80)
-    print(f"Start recording... Press Ctrl+C to stop")
+    print("Start recording... Press Ctrl+C to stop" if duration is None
+          else f"Recording for {duration:.1f}s (Ctrl+C to stop early)")
     print('='*80)
     # --- 【新增：初始化计数器和总开始时间】 ---
     frame_count = 0
     recording_start_time = time.time() 
 
     try:
-        while True:
+        while duration is None or time.time() - recording_start_time < duration:
             start_time = time.time()  # 记录当前帧开始时间
 
             # 抓取并写入这一帧（返回值不使用，所以不做深度对齐，省掉每帧的计算）
@@ -73,6 +88,7 @@ def record(recorder, video_name, fps):
                 # 如果掉帧，换行打印警告，避免弄乱原本的原地刷新行
                 print(f"\n[Warning] Frame processing lag! Cost: {elapsed_time:.4f}s")
 
+        print()
     except KeyboardInterrupt:
         print("\nStopping recording...")  # 捕获异常后先换行，防止覆盖计数输出
     finally:
@@ -81,11 +97,14 @@ def record(recorder, video_name, fps):
     
 
 if __name__ == "__main__":
-    video_name = "wet_open3d"
-    config_name = "720p_NFOV_UNBINNED"
-    # config_name = "720p_WFOV_UNBINNED"
-    config_path = os.path.join("config", config_name + ".json")
-    config, fps = init_config(config_path)
+    parser = argparse.ArgumentParser(description="Record an Azure Kinect MKV with Open3D.")
+    parser.add_argument("-n", "--name", default="wet_open3d", help="scene name; writes video/<name>.mkv")
+    parser.add_argument("-c", "--config", default="720p_NFOV_UNBINNED",
+                        help="preset name under config/ or path to a JSON config")
+    parser.add_argument("--duration", type=float, default=None, metavar="SEC",
+                        help="stop after this many seconds; record until Ctrl+C if omitted")
+    args = parser.parse_args()
+
+    config, fps = init_config(resolve_config(args.config))
     recorder = init_recorder(config)
-    record(recorder, video_name, fps)
-    
+    record(recorder, args.name, fps, duration=args.duration)

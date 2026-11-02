@@ -1,3 +1,11 @@
+"""
+Record color + depth + IR to MKV and IMU to CSV with pyk4a.
+使用 pyk4a 录制彩色、深度、红外到 MKV，并把 IMU 保存为 CSV。
+
+  python recorder_pyk4a.py -n wet_pyk4a -c 720p_NFOV_UNBINNED
+  python recorder_pyk4a.py -n test --exposure 2500 --duration 10
+"""
+import argparse
 import time
 import os
 import json
@@ -26,9 +34,12 @@ _COLOR_FMT_MAP = {
     "BGRA32": ImageFormat.COLOR_BGRA32,
 }
 
-# 运行时控制项（可在 main 中直接改）
-EXPOSURE_US = None
-AUTO_EXPOSURE = True
+def resolve_config(name_or_path):
+    """Accept a preset name under config/ or a path to a JSON file."""
+    if os.path.isfile(name_or_path):
+        return name_or_path
+    return os.path.join("config", name_or_path + ".json")
+
 
 def init_config(config_path):
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -64,15 +75,16 @@ def init_config(config_path):
     return config, fps_int
 
 
-def record(video_name, config, fps):
+def record(video_name, config, fps, exposure_us=None, duration=None):
     """
     录制视频和 IMU 数据
-    
+
     参数：
       video_name: 视频名称（不含扩展名）
       config: pyk4a.Config 对象
       fps: 帧率（整数）
-    曝光开关：在 main 中直接修改 EXPOSURE_US / AUTO_EXPOSURE
+      exposure_us: 手动曝光时间（微秒），None 表示自动曝光
+      duration: 录制时长（秒），None 表示一直录到 Ctrl+C
     """
     os.makedirs("video", exist_ok=True)
     mkv_path = os.path.join("video", video_name.strip() + ".mkv")
@@ -82,16 +94,14 @@ def record(video_name, config, fps):
     device.start()
 
     # 设置曝光
-    if AUTO_EXPOSURE:
+    if exposure_us is None:
         device.exposure_mode_auto = True
         print(f"✓ Auto exposure enabled")
-    elif EXPOSURE_US is not None:
+    else:
         # 曝光范围: 500-133330 微秒，步长 100
-        exposure_us = max(500, min(133330, EXPOSURE_US))
+        exposure_us = max(500, min(133330, exposure_us))
         device.exposure = exposure_us
         print(f"✓ Exposure set to {exposure_us} µs ({exposure_us/1000:.1f} ms)")
-    else:
-        print(f"✓ Exposure: default ({device.exposure} µs)")
 
     recorder = PyK4ARecord(path=mkv_path, config=config, device=device)
     recorder.create()
@@ -104,13 +114,13 @@ def record(video_name, config, fps):
     print('=' * 80)
     print(f"Recording → {mkv_path}")
     print(f"IMU CSV   → {imu_path}")
-    print("Press Ctrl+C to stop")
+    print("Press Ctrl+C to stop" if duration is None else f"Recording for {duration:.1f}s (Ctrl+C to stop early)")
     print('=' * 80)
 
     imu_rows = []
 
     try:
-        while True:
+        while duration is None or time.time() - recording_start_time < duration:
             start_time = time.time()
 
             # 采集一帧图像并写入 mkv
@@ -149,6 +159,7 @@ def record(video_name, config, fps):
             else:
                 print(f"\n[Warning] Frame lag: {elapsed:.4f}s")
 
+        print()
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
@@ -172,19 +183,16 @@ def record(video_name, config, fps):
     print(f"MKV saved: {frame_count} frames → {mkv_path}")
 
 if __name__ == "__main__":
-    video_name  = "wet_pyk4a"
-    config_name = "720p_NFOV_UNBINNED"
-    config_path = os.path.join("config", config_name + ".json")
-    config, fps = init_config(config_path)
-    
-    # 曝光设置选项（在这里修改）：
-    # 选项 1: 手动曝光，单位微秒
-    # EXPOSURE_US = 2500   # 2.5 ms
-    # AUTO_EXPOSURE = False
-    
-    # 选项 2: 自动曝光
-    EXPOSURE_US = None
-    AUTO_EXPOSURE = True
+    parser = argparse.ArgumentParser(description="Record Azure Kinect MKV + IMU CSV with pyk4a.")
+    parser.add_argument("-n", "--name", default="wet_pyk4a",
+                        help="scene name; writes video/<name>.mkv and video/<name>_imu.csv")
+    parser.add_argument("-c", "--config", default="720p_NFOV_UNBINNED",
+                        help="preset name under config/ or path to a JSON config")
+    parser.add_argument("--exposure", type=int, default=None, metavar="US",
+                        help="manual exposure in microseconds (500-133330); auto exposure if omitted")
+    parser.add_argument("--duration", type=float, default=None, metavar="SEC",
+                        help="stop after this many seconds; record until Ctrl+C if omitted")
+    args = parser.parse_args()
 
-    record(video_name, config, fps)
-    
+    config, fps = init_config(resolve_config(args.config))
+    record(args.name, config, fps, exposure_us=args.exposure, duration=args.duration)

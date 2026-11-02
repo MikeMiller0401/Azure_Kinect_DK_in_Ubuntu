@@ -1,18 +1,25 @@
+"""
+Print per-frame and global statistics of exported depth .npy files (zeros excluded).
+统计导出的深度 .npy 数据分布（排除无效的 0 值）。
+
+  python "read depth.py" wet_pyk4a                  # output/wet_pyk4a/{pyk4a,open3d}/
+  python "read depth.py" wet_pyk4a --method open3d
+  python "read depth.py" output/wet_pyk4a/pyk4a/depth
+"""
+import argparse
 from pathlib import Path
 
 import numpy as np
-
-
-# 直接在这里设置要遍历的场景名，或填写完整目录路径。
-SCENE = "holes_dry_30p"
 
 
 def find_depth_files(root: Path):
     return sorted(p for p in root.glob("*.npy") if p.is_file())
 
 
-# export_open3d.py 输出到 depth/，export_pyk4a.py 输出到 depth_raw/
-DEPTH_SUBDIRS = ("depth", "depth_raw")
+# depth/: export_pyk4a.py（深度相机坐标系）；depth_aligned/: export_open3d.py（彩色相机坐标系）
+# depth_raw/ 和 <scene>_export/ 是旧版目录结构，仍然兼容
+DEPTH_SUBDIRS = ("depth", "depth_aligned", "depth_raw")
+METHODS = ("pyk4a", "open3d")
 
 
 def find_depth_subdir(directory: Path):
@@ -22,24 +29,35 @@ def find_depth_subdir(directory: Path):
     return None
 
 
-def resolve_depth_root(scene_or_path: str) -> Path:
-    # 只返回深度子目录，避免把 ir_raw/、point_cloud/ 里的 .npy 混进统计
+def find_in_scene(scene_dir: Path, method):
+    """Look for output/<scene>/<method>/depth*, falling back to the legacy layouts."""
+    for m in ([method] if method else METHODS):
+        sub = find_depth_subdir(scene_dir / m)
+        if sub is not None:
+            return sub
+    if method is None:
+        return find_depth_subdir(scene_dir)
+    return None
+
+
+def resolve_depth_root(scene_or_path: str, method=None) -> Path:
+    # 只返回深度子目录，避免把 ir/、point_cloud/ 里的 .npy 混进统计
     input_path = Path(scene_or_path)
     if input_path.is_dir():
         if input_path.name in DEPTH_SUBDIRS:
             return input_path
-        sub = find_depth_subdir(input_path)
+        sub = find_depth_subdir(input_path) or find_in_scene(input_path, method)
         if sub is not None:
             return sub
 
     for scene_dir in (Path("output") / scene_or_path, Path("output") / f"{scene_or_path}_export"):
-        sub = find_depth_subdir(scene_dir)
+        sub = find_in_scene(scene_dir, method)
         if sub is not None:
             return sub
 
     output_dir = Path("output")
     available_scenes = sorted(
-        p.name for p in output_dir.iterdir() if p.is_dir() and find_depth_subdir(p) is not None
+        p.name for p in output_dir.iterdir() if p.is_dir() and find_in_scene(p, None) is not None
     ) if output_dir.is_dir() else []
     raise FileNotFoundError(
         f"找不到场景或目录: {scene_or_path}. 可用场景: {', '.join(available_scenes)}"
@@ -47,7 +65,15 @@ def resolve_depth_root(scene_or_path: str) -> Path:
 
 
 def main():
-    root = resolve_depth_root(SCENE)
+    parser = argparse.ArgumentParser(description="Depth .npy statistics for an exported scene.")
+    parser.add_argument("scene", nargs="?", default="holes_dry_30p",
+                        help="scene name under output/ or a directory path")
+    parser.add_argument("--method", choices=METHODS, default=None,
+                        help="which export to read when a scene has both (default: pyk4a first)")
+    args = parser.parse_args()
+
+    root = resolve_depth_root(args.scene, args.method)
+    print(f"Depth directory: {root}")
 
     depth_files = find_depth_files(root)
     if not depth_files:

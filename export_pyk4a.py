@@ -2,25 +2,31 @@
 Export depth, RGB, IR and point clouds from an Azure Kinect DK MKV file.
 导出 Azure Kinect 回放中的深度、彩色、红外与点云数据。
 
+  python export_pyk4a.py -n wet_pyk4a
+  python export_pyk4a.py -i /path/to/clip.mkv -o /path/to/out
+
 English:
-This script reads {MKV_PATH} (color recorded as MJPG or BGRA32) and exports every capture
-that has both depth and color to {OUTPUT_DIR}/:
-- depth_raw/: raw depth in the depth camera frame (uint16 .npy, mm)
+Reads video/<name>.mkv (color recorded as MJPG or BGRA32) and exports every capture
+that has both depth and color to output/<name>/pyk4a/:
+- color/: raw color images (.png)
+- depth/: raw depth in the depth camera frame (uint16 .npy, mm)
 - depth_vis/: pseudo-color depth visualizations (.png)
-- rgb_raw/: raw color images (.png)
-- rgb_aligned/: color reprojected into the depth camera frame (.png)
-- ir_raw/: IR frames (uint16 .npy)
+- color_aligned/: color reprojected into the depth camera frame (.png)
+- ir/: IR frames (uint16 .npy)
 - point_cloud/: depth point clouds (HxWx3 .npy, mm)
+- intrinsic_{color,depth}.txt, distortion_{color,depth}.txt
 
 中文：
-该脚本会读取 {MKV_PATH}（彩色为 MJPG 或 BGRA32 均可），对同时含深度和彩色的 capture 导出到 {OUTPUT_DIR}/：
-- depth_raw/: 深度相机坐标系下的原始深度（uint16 .npy，毫米）
+读取 video/<name>.mkv（彩色为 MJPG 或 BGRA32 均可），对同时含深度和彩色的 capture 导出到 output/<name>/pyk4a/：
+- color/: 原始彩色图像（.png）
+- depth/: 深度相机坐标系下的原始深度（uint16 .npy，毫米）
 - depth_vis/: 伪彩可视化深度图（.png）
-- rgb_raw/: 原始彩色图像（.png）
-- rgb_aligned/: 对齐到深度相机的彩色图像（.png）
-- ir_raw/: 红外图（uint16 .npy）
+- color_aligned/: 对齐到深度相机的彩色图像（.png）
+- ir/: 红外图（uint16 .npy）
 - point_cloud/: 深度点云（HxWx3 .npy，毫米）
+- intrinsic_{color,depth}.txt、distortion_{color,depth}.txt
 """
+import argparse
 import itertools
 import os
 import sys
@@ -125,33 +131,32 @@ class SimpleProgressBar:
 
 
 def main():
-    SCENE_NAME = "wet_pyk4a"
-    
-    MKV_PATH = os.path.join("video", f"{SCENE_NAME}.mkv")
-    OUTPUT_DIR = os.path.join("output", f"{SCENE_NAME}_export")
-    DEPTH_RAW_OUT_DIR = os.path.join(OUTPUT_DIR, "depth_raw")
-    DEPTH_VIS_OUT_DIR = os.path.join(OUTPUT_DIR, "depth_vis")
-    RGB_OUT_DIR = os.path.join(OUTPUT_DIR, "rgb_raw")
-    RGB_ALIGNED_OUT_DIR = os.path.join(OUTPUT_DIR, "rgb_aligned")
-    IR_RAW_OUT_DIR = os.path.join(OUTPUT_DIR, "ir_raw")
-    PC_OUT_DIR = os.path.join(OUTPUT_DIR, "point_cloud")
-    os.makedirs(RGB_ALIGNED_OUT_DIR, exist_ok=True)
-    os.makedirs(DEPTH_RAW_OUT_DIR, exist_ok=True)
-    os.makedirs(DEPTH_VIS_OUT_DIR, exist_ok=True)
-    os.makedirs(RGB_OUT_DIR, exist_ok=True)
-    os.makedirs(IR_RAW_OUT_DIR, exist_ok=True)
-    os.makedirs(PC_OUT_DIR, exist_ok=True)
-    if not os.path.exists(MKV_PATH):
-        print(f"MKV not found: {MKV_PATH}")
+    parser = argparse.ArgumentParser(description="Export depth, color, IR and point clouds from an Azure Kinect MKV.")
+    parser.add_argument("-n", "--name", default="wet_pyk4a",
+                        help="scene name; reads video/<name>.mkv, writes output/<name>/pyk4a/")
+    parser.add_argument("-i", "--input", default=None, help="MKV path (overrides --name)")
+    parser.add_argument("-o", "--output", default=None, help="output directory (overrides the default)")
+    args = parser.parse_args()
+
+    mkv_path = args.input or os.path.join("video", f"{args.name}.mkv")
+    output_dir = args.output or os.path.join("output", args.name, "pyk4a")
+    if not os.path.exists(mkv_path):
+        print(f"MKV not found: {mkv_path}")
         sys.exit(1)
-    playback = PyK4APlayback(MKV_PATH)  
+
+    out = {sub: os.path.join(output_dir, sub)
+           for sub in ("color", "depth", "depth_vis", "color_aligned", "ir", "point_cloud")}
+    for d in out.values():
+        os.makedirs(d, exist_ok=True)
+
+    playback = PyK4APlayback(mkv_path)
     playback.open()
-    save_intrinsics(playback, OUTPUT_DIR)
+    save_intrinsics(playback, output_dir)
     frame_idx = 0
     saved_idx = 0
     skipped = 0
     progress = SimpleProgressBar()
-    
+
     try:
         while True:
             try:
@@ -159,7 +164,7 @@ def main():
             except EOFError:
                 print("Reached end of MKV file.")
                 break
-            
+
             frame_idx += 1
             depth_raw = capture.depth
             color_img = normalize_color_frame(capture.color)
@@ -169,37 +174,29 @@ def main():
                 continue
 
             # 保存原始数据
-            ir_raw = capture.ir
-            depthraw_out_path = os.path.join(DEPTH_RAW_OUT_DIR, f"{saved_idx:06d}.npy")
-            irraw_out_path = os.path.join(IR_RAW_OUT_DIR, f"{saved_idx:06d}.npy")
-            colorraw_out_path = os.path.join(RGB_OUT_DIR, f"{saved_idx:06d}.png")
-            np.save(depthraw_out_path, depth_raw)
-            if ir_raw is not None:
-                np.save(irraw_out_path, ir_raw)
-            cv2.imwrite(colorraw_out_path, color_img)
-            
-            # 生成&保存可视化的深度数据
-            vis_aligned = depth_to_colormap(depth_raw)
-            depthvis_out_path = os.path.join(DEPTH_VIS_OUT_DIR, f"{saved_idx:06d}.png")
-            cv2.imwrite(depthvis_out_path, vis_aligned)
+            stem = f"{saved_idx:06d}"
+            np.save(os.path.join(out["depth"], f"{stem}.npy"), depth_raw)
+            if capture.ir is not None:
+                np.save(os.path.join(out["ir"], f"{stem}.npy"), capture.ir)
+            cv2.imwrite(os.path.join(out["color"], f"{stem}.png"), color_img)
 
-            # 生成&保存对齐的彩色图像
-            aligned_color_img = align_color_to_depth(color_img, depth_raw, playback)
-            aligned_color_out_path = os.path.join(RGB_ALIGNED_OUT_DIR, f"{saved_idx:06d}_aligned.png")
-            cv2.imwrite(aligned_color_out_path, aligned_color_img)
-            
+            # 生成&保存可视化的深度数据
+            cv2.imwrite(os.path.join(out["depth_vis"], f"{stem}.png"), depth_to_colormap(depth_raw))
+
+            # 生成&保存对齐到深度相机的彩色图像
+            cv2.imwrite(os.path.join(out["color_aligned"], f"{stem}.png"),
+                        align_color_to_depth(color_img, depth_raw, playback))
+
             # 生成&保存深度镜头的点云数据
-            pc = capture.depth_point_cloud
-            pc_out_path = os.path.join(PC_OUT_DIR, f"{saved_idx:06d}.npy")
-            np.save(pc_out_path, pc)
-            
+            np.save(os.path.join(out["point_cloud"], f"{stem}.npy"), capture.depth_point_cloud)
+
             saved_idx += 1
             progress.update()
     finally:
         playback.close()
         progress.close()
 
-    print(f"Processed {frame_idx} captures, saved {saved_idx}, skipped {skipped} incomplete.")
+    print(f"Processed {frame_idx} captures, saved {saved_idx}, skipped {skipped} incomplete → {output_dir}")
 
 if __name__ == "__main__":
     main()

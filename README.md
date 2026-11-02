@@ -85,44 +85,41 @@ k4aviewer            # Open Device → Start
 
 ### 2.4 Python 环境 / Python Environment
 
-中文：pyk4a 需要编译链接 K4A SDK，所以必须先完成 2.1。建议使用独立的 conda 环境：
+中文：pyk4a 需要编译链接 K4A SDK，所以必须先完成 2.1。需要 Python ≥ 3.10。用 conda 或 pip 任选一种：
 
-English: pyk4a builds against the K4A SDK, so finish 2.1 first. Use a dedicated conda environment:
+English: pyk4a builds against the K4A SDK, so finish 2.1 first. Python ≥ 3.10 is required. Use either conda or pip:
 
 ```bash
-conda create -n k4a python=3.10
+# conda（推荐 / recommended）
+conda env create -f environment.yml
 conda activate k4a
-pip install numpy opencv-python tqdm pyk4a open3d pandas scipy matplotlib
+
+# 或 pip / or pip
+pip install -r requirements.txt
 ```
 
-中文：
+中文：requirements.txt 中记录了已验证的版本（Python 3.10，numpy 2.2，pyk4a 1.5，open3d 0.20 等）。
 
-- pyk4a 路线需要 pyk4a。
-- Open3D 路线需要 open3d（录制和读取 MKV 依赖系统中的 libk4a）。
-- IMU 轨迹分析脚本需要 pandas、scipy、matplotlib。
-
-English:
-
-- The pyk4a workflow requires pyk4a.
-- The Open3D workflow requires open3d (recording and MKV reading use the system libk4a).
-- The IMU trajectory script requires pandas, scipy, and matplotlib.
+English: requirements.txt lists the tested versions (Python 3.10, numpy 2.2, pyk4a 1.5, open3d 0.20, etc.).
 
 ## 3. 仓库结构 / Repository Layout
 
 ```text
 config/                  Azure Kinect 录制配置 JSON / Azure Kinect recording configs
 Configuration details/   参考文档 / reference notes
-data/                    实验数据目录 / experiment data
-output/                  导出结果目录 / exported outputs
+docs/images/             README 示例截图 / README sample screenshots
 video/                   录制得到的 MKV 与 IMU CSV / recorded MKV files and IMU CSVs
+output/                  导出结果目录 / exported outputs (layout: see 5.6)
 
 recorder_pyk4a.py        使用 pyk4a 录制 MKV 和 IMU / record MKV + IMU via pyk4a
 export_pyk4a.py          导出深度、RGB、IR、点云、内参 / export depth, RGB, IR, point cloud, intrinsics
 recorder_open3d.py       使用 Open3D 录制 MKV / record MKV via Open3D
-export_open3d.py         使用 Open3D 导出彩色和深度 / export color and depth via Open3D
+export_open3d.py         使用 Open3D 导出彩色和对齐深度 / export color and color-aligned depth via Open3D
 imu_trajectory.py        从 IMU CSV 估计轨迹 / estimate trajectory from IMU CSV
 read depth.py            统计深度 .npy 数据分布 / inspect depth .npy statistics
 test.py                  读取并保存深度相机内参示例 / minimal intrinsic export example
+requirements.txt         pip 依赖 / pip dependencies
+environment.yml          conda 环境 / conda environment
 ```
 
 ## 4. 配置文件 / Configuration Files
@@ -141,107 +138,133 @@ English: The repository includes three camera presets, all with MJPG color:
 
 中文：
 
+- 录制脚本的 `-c` 参数可以填预设名（如 `720p_WFOV_UNBINNED`），也可以填任意 JSON 文件路径。
 - WFOV_UNBINNED 模式下设备不支持超过 15 FPS，两个录制脚本都会检查这一组合。
 - 两个录制脚本都会读取 `color_format`。推荐保持 MJPG：相机原生输出就是 MJPG，BGRA32 只是 SDK 在电脑上解码后的结果，画质相同；但 BGRA32 的文件约大 3 倍，录制时更耗 CPU，而且 Open3D 读不了。
 
 English:
 
+- The recorders' `-c` option accepts a preset name (e.g. `720p_WFOV_UNBINNED`) or a path to any JSON file.
 - WFOV_UNBINNED does not support frame rates above 15 FPS, and both recorders check for that combination.
 - Both recorders honor `color_format`. Keep MJPG: the camera outputs MJPG natively and BGRA32 is just the SDK decoding it on the host, so image quality is identical, while BGRA32 files are about 3x larger, recording uses more CPU, and Open3D cannot read them.
 
 ## 5. 快速开始 / Quick Start
 
-中文：所有脚本都使用相对路径，请在仓库根目录、并在 `k4a` 环境中运行。同一时间只能有一个程序打开相机，录制前请关闭 k4aviewer。
+中文：所有脚本都使用相对路径，请在仓库根目录、并在 `k4a` 环境中运行。每个脚本都支持 `-h` 查看全部参数；不带参数运行时使用脚本内的默认值。同一时间只能有一个程序打开相机，录制前请关闭 k4aviewer。
 
-English: All scripts use relative paths, so run them from the repository root inside the `k4a` environment. Only one process can open the camera at a time; close k4aviewer before recording.
+English: All scripts use relative paths, so run them from the repository root inside the `k4a` environment. Every script supports `-h` for its full option list and falls back to built-in defaults when run without arguments. Only one process can open the camera at a time; close k4aviewer before recording.
+
+中文：一个完整流程示例（场景名 `demo`）：
+
+English: A complete example run (scene name `demo`):
+
+```bash
+python recorder_pyk4a.py -n demo --duration 10     # → video/demo.mkv, video/demo_imu.csv
+python export_pyk4a.py -n demo                     # → output/demo/pyk4a/
+python export_open3d.py -n demo --vis-max 1500     # → output/demo/open3d/
+python imu_trajectory.py -n demo                   # → output/demo/imu/
+python "read depth.py" demo                        # 深度统计 / depth statistics
+```
 
 ### 5.1 使用 pyk4a 录制 / Record with pyk4a
 
-中文：编辑 recorder_pyk4a.py 中 main 部分的 video_name 和 config_name，需要时修改 EXPOSURE_US / AUTO_EXPOSURE，然后运行，按 Ctrl+C 停止：
-
-English: Edit video_name and config_name in the main block of recorder_pyk4a.py, optionally set EXPOSURE_US / AUTO_EXPOSURE, then run it and press Ctrl+C to stop:
-
 ```bash
-python recorder_pyk4a.py
+python recorder_pyk4a.py -n demo -c 720p_NFOV_UNBINNED --duration 10
+python recorder_pyk4a.py -n demo --exposure 2500    # 手动曝光 2.5 ms，Ctrl+C 停止 / manual 2.5 ms exposure, stop with Ctrl+C
 ```
 
-中文：脚本会生成以下文件（720P + NFOV_UNBINNED 30 FPS 约 50 MB/秒，主要是未压缩的深度和 IR）：
+| 参数 / Option | 默认 / Default | 说明 / Description |
+|---|---|---|
+| `-n, --name` | `wet_pyk4a` | 场景名 / scene name |
+| `-c, --config` | `720p_NFOV_UNBINNED` | 预设名或 JSON 路径 / preset name or JSON path |
+| `--exposure US` | 自动 / auto | 手动曝光（微秒，500–133330）/ manual exposure in µs (500–133330) |
+| `--duration SEC` | 直到 Ctrl+C / until Ctrl+C | 录制时长 / recording length |
 
-- video/<scene>.mkv
-- video/<scene>_imu.csv（约 1.6 kHz）
+中文：输出 video/<name>.mkv 与 video/<name>_imu.csv（IMU 约 1.6 kHz）。720P + NFOV_UNBINNED 30 FPS 约 50 MB/秒，主要是未压缩的深度和 IR。示例输出：
 
-English: The script writes the following (about 50 MB/s at 720P + NFOV_UNBINNED 30 FPS, mostly uncompressed depth and IR):
+English: Writes video/<name>.mkv and video/<name>_imu.csv (IMU at about 1.6 kHz). 720P + NFOV_UNBINNED 30 FPS is about 50 MB/s, mostly uncompressed depth and IR. Sample output:
 
-- video/<scene>.mkv
-- video/<scene>_imu.csv (about 1.6 kHz)
+```text
+================================================================================
+FPS=30  Resolution=720P  DepthMode=NFOV_UNBINNED  ColorFormat=MJPG
+================================================================================
+✓ Auto exposure enabled
+================================================================================
+Recording → video/demo.mkv
+IMU CSV   → video/demo_imu.csv
+Recording for 4.0s (Ctrl+C to stop early)
+================================================================================
+IMU saved: 6608 samples → video/demo_imu.csv
+MKV saved: 117 frames → video/demo.mkv
+```
 
 ### 5.2 使用 pyk4a 导出 / Export with pyk4a
 
-中文：编辑 export_pyk4a.py 中的 SCENE_NAME，然后运行。MJPG 和 BGRA32 录制都支持，缺少深度或彩色的帧会被跳过。
-
-English: Edit SCENE_NAME in export_pyk4a.py, then run it. Both MJPG and BGRA32 recordings are supported; captures missing depth or color are skipped.
-
 ```bash
-python export_pyk4a.py
+python export_pyk4a.py -n demo
+python export_pyk4a.py -i /path/to/clip.mkv -o /path/to/out
 ```
 
-中文：输出目录为 output/<scene>_export/，深度相关数据都在深度相机坐标系下（576×640，NFOV_UNBINNED）：
+| 参数 / Option | 默认 / Default | 说明 / Description |
+|---|---|---|
+| `-n, --name` | `wet_pyk4a` | 读取 video/<name>.mkv / reads video/<name>.mkv |
+| `-i, --input` | — | 直接指定 MKV 路径 / MKV path, overrides `--name` |
+| `-o, --output` | `output/<name>/pyk4a` | 输出目录 / output directory |
 
-- depth_raw/: 原始深度 .npy（uint16，毫米）
-- depth_vis/: 深度伪彩图 .png（每帧按 2%–98% 分位数拉伸）
-- rgb_raw/: 原始彩色图 .png
-- rgb_aligned/: 对齐到深度相机的彩色图 .png
-- ir_raw/: 红外图 .npy
-- point_cloud/: 深度点云 .npy（H×W×3，毫米）
-- intrinsic_depth.txt / intrinsic_color.txt
-- distortion_depth.txt / distortion_color.txt
+中文：MJPG 和 BGRA32 录制都支持，缺少深度或彩色的帧会被跳过。深度相关数据都在**深度相机坐标系**下（NFOV_UNBINNED 为 576×640），目录内容见 5.6。
 
-English: The output directory is output/<scene>_export/. Depth-related data is in the depth camera frame (576×640 for NFOV_UNBINNED):
+English: Both MJPG and BGRA32 recordings are supported; captures missing depth or color are skipped. Depth-related data is in the **depth camera frame** (576×640 for NFOV_UNBINNED); see 5.6 for the layout.
 
-- depth_raw/: raw depth .npy files (uint16, mm)
-- depth_vis/: pseudo-colored depth .png files (per-frame 2%–98% percentile stretch)
-- rgb_raw/: raw color .png files
-- rgb_aligned/: color reprojected into the depth camera .png files
-- ir_raw/: IR .npy files
-- point_cloud/: depth point-cloud .npy files (H×W×3, mm)
-- intrinsic_depth.txt / intrinsic_color.txt
-- distortion_depth.txt / distortion_color.txt
+```text
+Reached end of MKV file.
+Processed 117 captures, saved 117, skipped 0 incomplete → output/demo/pyk4a
+```
+
+中文：示例输出（同一帧）：彩色、深度伪彩、对齐到深度相机的彩色、红外。
+
+English: Sample output (same frame): color, depth colormap, color aligned to the depth camera, IR.
+
+![export_pyk4a.py outputs](docs/images/pyk4a_outputs.jpg)
+
+中文：point_cloud/ 配合 color_aligned/ 即可得到彩色点云：
+
+English: Combining point_cloud/ with color_aligned/ gives a colored point cloud:
+
+![colored point cloud](docs/images/point_cloud.jpg)
 
 ### 5.3 使用 Open3D 录制 / Record with Open3D
 
-中文：编辑 recorder_open3d.py 中的 video_name 与 config_name，然后运行，按 Ctrl+C 停止：
-
-English: Edit video_name and config_name in recorder_open3d.py, then run it and press Ctrl+C to stop:
-
 ```bash
-python recorder_open3d.py
+python recorder_open3d.py -n demo_o3d -c 720p_NFOV_UNBINNED --duration 10
 ```
 
-中文：录制结果会保存为 video/<scene>.mkv（不含 IMU CSV）。
+中文：参数与 5.1 相同（没有 `--exposure`），默认场景名为 `wet_open3d`。只输出 video/<name>.mkv，不含 IMU CSV。
 
-English: The recording is saved as video/<scene>.mkv (no IMU CSV).
+English: Same options as 5.1 (without `--exposure`); the default scene name is `wet_open3d`. Writes video/<name>.mkv only, without an IMU CSV.
 
 ### 5.4 使用 Open3D 导出 / Export with Open3D
 
-中文：编辑 export_open3d.py 中的 video_name，需要时调整顶部的 DEPTH_VIS_MIN_MM / DEPTH_VIS_MAX_MM（深度伪彩图的固定显示范围，默认 0–550 mm），然后运行：
-
-English: Edit video_name in export_open3d.py, optionally adjust DEPTH_VIS_MIN_MM / DEPTH_VIS_MAX_MM at the top (the fixed display range of the depth colormap, 0–550 mm by default), then run:
-
 ```bash
-python export_open3d.py
+python export_open3d.py -n demo_o3d
+python export_open3d.py -n demo --vis-max 1500
 ```
 
-中文：输出目录为 output/<scene>/：
+| 参数 / Option | 默认 / Default | 说明 / Description |
+|---|---|---|
+| `-n, --name` | `wet_open3d` | 读取 video/<name>.mkv / reads video/<name>.mkv |
+| `-i, --input` | — | 直接指定 MKV 路径 / MKV path, overrides `--name` |
+| `-o, --output` | `output/<name>/open3d` | 输出目录 / output directory |
+| `--vis-min`, `--vis-max` | `0`, `550` | 深度伪彩图的固定显示范围（毫米）/ fixed depth colormap range in mm |
 
-- color/: 彩色图像
-- depth/: 原始深度 .npy 与伪彩图 .png。**Open3D 读出的深度已对齐到彩色相机**，与彩色图同分辨率，所以应搭配 K_rgb.txt 使用。
-- K_rgb.txt / K_depth.txt
+中文：**Open3D 读出的深度已对齐到彩色相机**，与彩色图同分辨率，所以应搭配 intrinsic_color.txt 使用。只能读取 MJPG 录制。
 
-English: The output directory is output/<scene>/:
+English: **Open3D aligns depth to the color camera**, so it has the color resolution; pair it with intrinsic_color.txt. Only MJPG recordings can be read.
 
-- color/: color images
-- depth/: raw depth .npy files and pseudo-colored depth .png files. **Open3D aligns depth to the color camera**, so it has the color resolution; pair it with K_rgb.txt.
-- K_rgb.txt / K_depth.txt
+中文：示例输出（`--vis-min 200 --vis-max 1100`）：
+
+English: Sample output (`--vis-min 200 --vis-max 1100`):
+
+![export_open3d.py outputs](docs/images/open3d_outputs.jpg)
 
 ### 5.5 兼容性 / Compatibility
 
@@ -252,42 +275,82 @@ English: The output directory is output/<scene>/:
 | k4arecorder（默认 MJPG / MJPG by default） | ✓ | ✓ |
 | 旧版 BGRA32 录制 / Legacy BGRA32 recordings | ✓ | ✗ |
 
+### 5.6 输出目录结构 / Output Layout
+
+中文：同一个场景的所有结果都放在 output/<name>/ 下，按处理方式分子目录。所有逐帧文件都按帧序号命名为 `000000.png` / `000000.npy`；目录名带 `_aligned` 表示已重投影到另一台相机的坐标系。
+
+English: All results for one scene live under output/<name>/, split by method. Per-frame files are named by frame index (`000000.png` / `000000.npy`); a `_aligned` suffix means the data is reprojected into the other camera's frame.
+
+```text
+output/<name>/
+├── pyk4a/                     export_pyk4a.py — 深度相机坐标系 / depth camera frame
+│   ├── color/                 原始彩色 / raw color (.png)
+│   ├── depth/                 原始深度 / raw depth (uint16 .npy, mm)
+│   ├── depth_vis/             深度伪彩，每帧 2%–98% 分位拉伸 / depth colormap, per-frame 2–98% stretch (.png)
+│   ├── color_aligned/         对齐到深度相机的彩色 / color reprojected into the depth camera (.png)
+│   ├── ir/                    红外 / IR (uint16 .npy)
+│   ├── point_cloud/           点云 / point cloud (H×W×3 .npy, mm)
+│   ├── intrinsic_color.txt    intrinsic_depth.txt
+│   └── distortion_color.txt   distortion_depth.txt
+├── open3d/                    export_open3d.py — 彩色相机坐标系 / color camera frame
+│   ├── color/                 彩色 / color (.png)
+│   ├── depth_aligned/         对齐到彩色相机的深度 / depth reprojected into the color camera (uint16 .npy, mm)
+│   ├── depth_aligned_vis/     深度伪彩，固定范围 / depth colormap, fixed range (.png)
+│   ├── intrinsic_color.txt    intrinsic_depth.txt
+│   └── distortion_color.txt   distortion_depth.txt
+└── imu/                       imu_trajectory.py
+    ├── trajectory.csv
+    └── trajectory.png
+```
+
+中文：旧版目录与新版的对应关系（旧数据仍可直接用 `read depth.py` 读取）：
+
+English: Mapping from the old layout (old data still works with `read depth.py`):
+
+| 旧 / Old | 新 / New |
+|---|---|
+| `output/<name>_export/depth_raw/`, `rgb_raw/`, `rgb_aligned/<i>_aligned.png`, `ir_raw/` | `output/<name>/pyk4a/depth/`, `color/`, `color_aligned/<i>.png`, `ir/` |
+| `output/<name>/depth/`（Open3D） | `output/<name>/open3d/depth_aligned/` + `depth_aligned_vis/` |
+| `output/<name>/K_rgb.txt`, `K_depth.txt` | `output/<name>/open3d/intrinsic_color.txt`, `intrinsic_depth.txt` |
+| `output/imu_trajectory_est.csv` / `.png` | `output/<name>/imu/trajectory.csv` / `.png` |
+
 ## 6. 辅助脚本 / Helper Scripts
 
 ### 6.1 IMU 轨迹估计 / IMU Trajectory Estimation
 
-中文：imu_trajectory.py 读取 IMU CSV，进行简单的陀螺积分、重力补偿和 ZUPT 静止约束，输出：
-
-- output/imu_trajectory_est.csv
-- output/imu_trajectory_est.png
-
-English: imu_trajectory.py reads an IMU CSV file, performs simple gyro integration, gravity compensation, and a basic ZUPT heuristic, then writes:
-
-- output/imu_trajectory_est.csv
-- output/imu_trajectory_est.png
-
-中文：运行前请先修改脚本顶部的 csv_path。脚本默认录制开始的前 2 秒相机静止，用于估计偏置。纯 IMU 二次积分漂移很大，结果只适合粗略参考。
-
-English: Update csv_path near the top of the script before running it. The script assumes the camera is still for the first 2 seconds to estimate biases. Pure IMU double integration drifts quickly, so treat the result as a rough estimate only.
-
 ```bash
-python imu_trajectory.py
+python imu_trajectory.py -n demo
+python imu_trajectory.py -i video/other_imu.csv -o output/other/imu --static-sec 3
 ```
+
+中文：读取 video/<name>_imu.csv，进行简单的陀螺积分、重力补偿和 ZUPT 静止约束，输出到 output/<name>/imu/。`--static-sec` 指定录制开头相机保持静止的秒数（默认 2 秒），用于估计偏置。纯 IMU 二次积分漂移很大，结果只适合粗略参考。
+
+English: Reads video/<name>_imu.csv, performs simple gyro integration, gravity compensation, and a basic ZUPT heuristic, and writes to output/<name>/imu/. `--static-sec` is how long the camera stays still at the start (default 2 s), used for bias estimation. Pure IMU double integration drifts quickly, so treat the result as a rough estimate only.
 
 ### 6.2 深度数据检查 / Depth Data Inspection
 
-中文：read depth.py 会遍历一个场景的深度 .npy 文件，打印每帧和整体统计量。运行前请先修改 SCENE，可以填场景名（如 `wet_open3d`、`wet_pyk4a_export`）或完整目录路径。
-
-- 自动识别 export_open3d.py 的 `depth/` 和 export_pyk4a.py 的 `depth_raw/`，不会把 IR 和点云混进统计。
-- 统计时排除无效的 0 值，并单独打印有效像素比例。
-
-English: read depth.py scans the depth .npy files of one scene and reports per-file plus global statistics. Update SCENE before running; it accepts a scene name (e.g. `wet_open3d`, `wet_pyk4a_export`) or a full directory path.
-
-- Detects both `depth/` (export_open3d.py) and `depth_raw/` (export_pyk4a.py), so IR and point clouds are never mixed in.
-- Invalid zero pixels are excluded, and the valid-pixel ratio is reported separately.
-
 ```bash
-python "read depth.py"
+python "read depth.py" demo                    # 优先 pyk4a/depth / pyk4a/depth first
+python "read depth.py" demo --method open3d    # open3d/depth_aligned
+python "read depth.py" output/demo/pyk4a/depth # 任意目录 / any directory
+```
+
+中文：打印每帧和整体统计量，统计时排除无效的 0 值并单独打印有效像素比例。只读取深度目录，不会把 IR 和点云混进统计。
+
+English: Prints per-file and global statistics, excluding invalid zero pixels and reporting the valid-pixel ratio separately. Only depth directories are read, so IR and point clouds are never mixed in.
+
+```text
+Depth directory: output/demo/pyk4a/depth
+000000.npy: min=151.0, max=971.0, median=339.0, mean=467.9, valid=43.1%
+...
+================================================================================
+总文件数: 117
+有效像素比例: 43.0%（以下统计均已排除 0 值）
+全局最小值: 151.0 (文件: 000000.npy)
+全局最大值: 2744.0 (文件: 000009.npy)
+全局平均值(所有有效像素): 467.0951710392246
+按帧平均值(每帧mean再平均): 467.0942044865749
+按帧中位数(每帧median再平均): 338.22222222222223
 ```
 
 ### 6.3 内参导出示例 / Intrinsic Export Example
@@ -328,17 +391,15 @@ k4arecorder -d NFOV_UNBINNED -c 1080p -r 5 output.mkv
 
 ## 9. 当前仓库的使用特点 / Current Usage Pattern in This Repository
 
-中文：当前脚本以实验脚本风格为主，而不是通用 CLI 工具，因此有几个使用特征需要注意：
+中文：脚本以实验工具为主，有几个特点需要注意：
 
-- 多数脚本在 main 中写死了场景名、配置名或输入路径。
-- 输出目录命名并不完全统一，例如 Open3D 导出和 pyk4a 导出的目录结构不同，深度所在坐标系也不同（Open3D 对齐到彩色，pyk4a 保留深度相机）。
-- 脚本主要面向单机、本地数据处理，没有参数解析、日志系统或批处理封装。
+- 两种导出的深度坐标系不同：pyk4a 保留深度相机坐标系，Open3D 对齐到彩色相机，配内参时要对应。
+- 脚本主要面向单机、本地数据处理，没有日志系统或批处理封装。
 
-English: The scripts are currently written more like lab utilities than polished CLI tools, so keep these traits in mind:
+English: The scripts are lab utilities; keep these traits in mind:
 
-- Most scripts use hard-coded scene names, config names, or input paths in the main block.
-- Output naming is not fully unified: the Open3D and pyk4a export layouts differ, and so does the depth frame (Open3D aligns to color, pyk4a keeps the depth camera).
-- The code is intended for local experimentation, without argument parsing, logging, or batch orchestration.
+- The two exporters use different depth frames: pyk4a keeps the depth camera, Open3D aligns to color. Pick intrinsics accordingly.
+- The code is intended for local experimentation, without logging or batch orchestration.
 
 ## 10. 参考资料 / References
 
@@ -349,16 +410,10 @@ English: The scripts are currently written more like lab utilities than polished
 
 ## TODO LIST
 
-中文：如果你准备继续维护这个仓库，优先建议做以下改进：
+中文：
 
-- 给 recorder/export 脚本补充命令行参数，而不是手动改源码。
-- 统一 output 目录结构与命名规则。
-- 增加 requirements.txt 或 environment.yml。
-- 在 README 中增加示例输入、示例输出截图。
+- 支持批量处理多个场景。
 
-English: If you plan to keep maintaining this repository, these are the suggested next steps:
+English:
 
-- Add command-line arguments to the recorder/export scripts instead of editing source code.
-- Unify the output directory layout and naming.
-- Add requirements.txt or environment.yml.
-- Add sample inputs and output screenshots to the README.
+- Support batch processing of multiple scenes.
