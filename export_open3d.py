@@ -4,21 +4,28 @@ import cv2
 import os
 from tqdm import tqdm
 from pyk4a import PyK4APlayback
+from pyk4a.calibration import CalibrationType
 
-def save_color(capture, color_path):
+# 深度伪彩图的固定可视化范围（毫米），超出范围的像素会被截断成同一颜色，按拍摄场景调整
+DEPTH_VIS_MIN_MM = 0
+DEPTH_VIS_MAX_MM = 550
+
+
+def save_color(capture, color_path, idx):
     color = np.asarray(capture.color)
     color = cv2.cvtColor(color, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(f"{color_path}/{i:06d}.png", color)
+    cv2.imwrite(os.path.join(color_path, f"{idx:06d}.png"), color)
 
 
-def save_depth(capture, depth_path):
+def save_depth(capture, depth_path, idx):
+    # Open3D 读出的深度已对齐到彩色相机（与彩色图同分辨率），对应的内参是 K_rgb
     depth = np.asarray(capture.depth)
     # 1. 先保存原始深度数据（这个数据本身是稳定的，单位是毫米 mm）
-    np.save(os.path.join(depth_path, f"{i:06d}.npy"), depth)
+    np.save(os.path.join(depth_path, f"{idx:06d}.npy"), depth)
 
-    # 2. 设定固定的可视化范围（例如：500mm 到 4000mm，根据你的拍摄场景调整）
-    min_distance = 0
-    max_distance = 550
+    # 2. 使用固定的可视化范围，保证不同帧之间颜色可比
+    min_distance = DEPTH_VIS_MIN_MM
+    max_distance = DEPTH_VIS_MAX_MM
 
     # 3. 裁剪数据并将其固定映射到 0-255
     # 将超出范围的值截断
@@ -31,14 +38,14 @@ def save_depth(capture, depth_path):
 
     # 5. 生成伪彩色并保存
     depth_heatmap = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
-    cv2.imwrite(f"{depth_path}/{i:06d}.png", depth_heatmap)
+    cv2.imwrite(os.path.join(depth_path, f"{idx:06d}.png"), depth_heatmap)
 
 def save_camera(video_path, save_path):
     playback = PyK4APlayback(video_path)
     playback.open()
 
-    K_rgb = playback.calibration.get_camera_matrix(0)
-    K_depth = playback.calibration.get_camera_matrix(1)
+    K_rgb = playback.calibration.get_camera_matrix(CalibrationType.COLOR)
+    K_depth = playback.calibration.get_camera_matrix(CalibrationType.DEPTH)
     
     np.savetxt(os.path.join(save_path, "K_rgb.txt"), K_rgb, fmt="%.8f")
     np.savetxt(os.path.join(save_path, "K_depth.txt"), K_depth, fmt="%.8f")
@@ -76,15 +83,15 @@ if __name__ == "__main__":
         if rgbd is None:
             continue
 
-        if reader.is_eof():
-            break
-        save_color(rgbd, color_path)
-        save_depth(rgbd, depth_path)
+        save_color(rgbd, color_path, i)
+        save_depth(rgbd, depth_path, i)
 
         i += 1
         pbar.update(1)   # ✅ 更新进度条
 
     pbar.close()
     reader.close()
+    if i == 0:
+        raise RuntimeError("No frames decoded. Open3D can only read MJPG recordings, not BGRA32.")
     save_camera(video_path, output_path)
     print("Done:", i, "frames")

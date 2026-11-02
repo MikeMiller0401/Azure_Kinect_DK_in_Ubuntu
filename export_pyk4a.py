@@ -1,18 +1,25 @@
 """
-Export aligned depth and RGB from Azure Kinect DK MKV file.
-导出 Azure Kinect 回放中的对齐深度与原始彩色帧。 
+Export depth, RGB, IR and point clouds from an Azure Kinect DK MKV file.
+导出 Azure Kinect 回放中的深度、彩色、红外与点云数据。
 
 English:
-This script reads {MKV_PATH} and exports data from each valid capture to output/{OUTPUT_DIR}/:
-- depth_raw/: aligned raw depth frames (uint16 .npy)
-- depth_transformed/: pseudo-color depth visualizations (.png)
+This script reads {MKV_PATH} (color recorded as MJPG or BGRA32) and exports every capture
+that has both depth and color to {OUTPUT_DIR}/:
+- depth_raw/: raw depth in the depth camera frame (uint16 .npy, mm)
+- depth_vis/: pseudo-color depth visualizations (.png)
 - rgb_raw/: raw color images (.png)
+- rgb_aligned/: color reprojected into the depth camera frame (.png)
+- ir_raw/: IR frames (uint16 .npy)
+- point_cloud/: depth point clouds (HxWx3 .npy, mm)
 
 中文：
-该脚本会读取 {MKV_PATH}，并将每个有效 capture 的数据保存到 output/{OUTPUT_DIR}/ 下：
-- depth_raw/: 对齐后的原始深度（uint16 .npy）
-- depth_transformed/: 伪彩可视化深度图（.png）
+该脚本会读取 {MKV_PATH}（彩色为 MJPG 或 BGRA32 均可），对同时含深度和彩色的 capture 导出到 {OUTPUT_DIR}/：
+- depth_raw/: 深度相机坐标系下的原始深度（uint16 .npy，毫米）
+- depth_vis/: 伪彩可视化深度图（.png）
 - rgb_raw/: 原始彩色图像（.png）
+- rgb_aligned/: 对齐到深度相机的彩色图像（.png）
+- ir_raw/: 红外图（uint16 .npy）
+- point_cloud/: 深度点云（HxWx3 .npy，毫米）
 """
 import itertools
 import os
@@ -21,6 +28,7 @@ import cv2
 import numpy as np
 from pyk4a import PyK4APlayback
 from pyk4a.calibration import CalibrationType
+from pyk4a.transformation import color_image_to_depth_camera
 
 def depth_to_colormap(depth: np.ndarray) -> np.ndarray:
     """Convert uint16 depth to a visible pseudo-color image."""
@@ -83,55 +91,15 @@ def save_intrinsics(playback, output_dir: str):
     np.savetxt(os.path.join(output_dir, "distortion_color.txt"), dist_color, fmt="%.9f")
 
 
-def aligned_depth(capture):
-    depth_aligned = capture.transformed_depth
-    return depth_aligned
+def align_color_to_depth(color_bgr: np.ndarray, depth: np.ndarray, playback) -> np.ndarray:
+    """Reproject color into the depth camera frame.
 
-def aligned_color(capture):
-    color_aligned = capture.transformed_color
-    return color_aligned
-
-def align_rgb_to_depth(depth: np.ndarray, color_raw: np.ndarray, calibration) -> np.ndarray | None:
-    """Align a color image to the depth camera coordinate system."""
-    color_img = normalize_color_frame(color_raw)
-    if color_img is None:
-        return None
-
-    if depth is None:
-        return None
-
-    depth = np.asarray(depth)
-    if depth.ndim != 2:
-        return None
-
-    height, width = depth.shape
-    aligned_color = np.zeros((height, width, 3), dtype=np.uint8)
-    valid = depth > 0
-    if not np.any(valid):
-        return aligned_color
-
-    for y in range(height):
-        for x in range(width):
-            if not valid[y, x]:
-                continue
-
-            point_3d = calibration.convert_2d_to_3d(
-                (float(x), float(y)),
-                float(depth[y, x]),
-                CalibrationType.DEPTH,
-                CalibrationType.DEPTH,
-            )
-            color_xy = calibration.convert_3d_to_2d(
-                point_3d,
-                CalibrationType.DEPTH,
-                CalibrationType.COLOR,
-            )
-            u = int(round(color_xy[0]))
-            v = int(round(color_xy[1]))
-            if 0 <= u < color_img.shape[1] and 0 <= v < color_img.shape[0]:
-                aligned_color[y, x] = color_img[v, u]
-
-    return aligned_color
+    capture.transformed_color only works for BGRA32 recordings, so decode first and
+    call the SDK transformation on the BGRA image ourselves (works for MJPG too).
+    """
+    color_bgra = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2BGRA)
+    aligned = color_image_to_depth_camera(color_bgra, depth, playback.calibration, playback.thread_safe)
+    return cv2.cvtColor(aligned, cv2.COLOR_BGRA2BGR)
 
 
 class SimpleProgressBar:
@@ -181,6 +149,7 @@ def main():
     save_intrinsics(playback, OUTPUT_DIR)
     frame_idx = 0
     saved_idx = 0
+    skipped = 0
     progress = SimpleProgressBar()
     
     try:
@@ -191,16 +160,22 @@ def main():
                 print("Reached end of MKV file.")
                 break
             
-            # 保存原始数据
+            frame_idx += 1
             depth_raw = capture.depth
-            color_raw = capture.color
+            color_img = normalize_color_frame(capture.color)
+            # 未开启同步录制时，开头几帧可能只有深度或只有彩色，直接跳过
+            if depth_raw is None or color_img is None:
+                skipped += 1
+                continue
+
+            # 保存原始数据
             ir_raw = capture.ir
             depthraw_out_path = os.path.join(DEPTH_RAW_OUT_DIR, f"{saved_idx:06d}.npy")
             irraw_out_path = os.path.join(IR_RAW_OUT_DIR, f"{saved_idx:06d}.npy")
             colorraw_out_path = os.path.join(RGB_OUT_DIR, f"{saved_idx:06d}.png")
             np.save(depthraw_out_path, depth_raw)
-            np.save(irraw_out_path, ir_raw)
-            color_img = normalize_color_frame(color_raw) 
+            if ir_raw is not None:
+                np.save(irraw_out_path, ir_raw)
             cv2.imwrite(colorraw_out_path, color_img)
             
             # 生成&保存可视化的深度数据
@@ -209,7 +184,7 @@ def main():
             cv2.imwrite(depthvis_out_path, vis_aligned)
 
             # 生成&保存对齐的彩色图像
-            aligned_color_img = normalize_color_frame(aligned_color(capture))
+            aligned_color_img = align_color_to_depth(color_img, depth_raw, playback)
             aligned_color_out_path = os.path.join(RGB_ALIGNED_OUT_DIR, f"{saved_idx:06d}_aligned.png")
             cv2.imwrite(aligned_color_out_path, aligned_color_img)
             
@@ -219,13 +194,12 @@ def main():
             np.save(pc_out_path, pc)
             
             saved_idx += 1
-            frame_idx += 1
             progress.update()
     finally:
         playback.close()
         progress.close()
 
-    print(f"Processed {frame_idx} captures.")
+    print(f"Processed {frame_idx} captures, saved {saved_idx}, skipped {skipped} incomplete.")
 
 if __name__ == "__main__":
     main()

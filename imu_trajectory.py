@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R
@@ -76,6 +77,7 @@ for i in range(1, N):
     pos[i] = pos[i-1] + vel[i] * dti
 
 # 5) 导出轨迹
+os.makedirs("output", exist_ok=True)
 out = pd.DataFrame({
     "t": t - t[0],
     "x": pos[:, 0],

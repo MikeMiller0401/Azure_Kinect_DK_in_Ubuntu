@@ -21,7 +21,7 @@ def init_config(config_path):
     print('='*80)
     print(f"The camera has {fps} FPS, {resolution} resolution, and {depth_mode} depth mode")
     print('='*80)
-    if fps > 15 and depth_mode == "UNBINNED":
+    if fps > 15 and depth_mode == "WFOV_UNBINNED":
         raise RuntimeError("The camera does not support higher than 15 FPS in WFOV_UNBINNED mode.")
     return config, fps
 
@@ -32,7 +32,10 @@ def init_recorder(config):
     return recorder
 
 def record(recorder, video_name, fps):
-    recorder.open_record(os.path.join("video", video_name + ".mkv"))
+    os.makedirs("video", exist_ok=True)
+    mkv_path = os.path.join("video", video_name + ".mkv")
+    if not recorder.open_record(mkv_path):
+        raise RuntimeError(f"Failed to open {mkv_path} for recording")
     TARGET_FPS = fps
     FRAME_DURATION = 1.0 / TARGET_FPS
     print('='*80)
@@ -46,10 +49,10 @@ def record(recorder, video_name, fps):
         while True:
             start_time = time.time()  # 记录当前帧开始时间
 
-            # 抓取并写入这一帧
-            rgbd = recorder.record_frame(
+            # 抓取并写入这一帧（返回值不使用，所以不做深度对齐，省掉每帧的计算）
+            recorder.record_frame(
                 enable_record=True,
-                enable_align_depth_to_color=True
+                enable_align_depth_to_color=False
             )
             
             # --- 【新增：累加帧数并计算总录制时长】 ---
@@ -72,9 +75,9 @@ def record(recorder, video_name, fps):
 
     except KeyboardInterrupt:
         print("\nStopping recording...")  # 捕获异常后先换行，防止覆盖计数输出
-
-    recorder.close_record()
-    print(f"Saved to {video_name}.mkv")
+    finally:
+        recorder.close_record()
+    print(f"Saved to {mkv_path}")
     
 
 if __name__ == "__main__":

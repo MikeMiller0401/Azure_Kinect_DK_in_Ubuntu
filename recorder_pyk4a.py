@@ -21,11 +21,14 @@ _RES_MAP = {
     "2160P": ColorResolution.RES_2160P,
     "3072P": ColorResolution.RES_3072P,
 }
+_COLOR_FMT_MAP = {
+    "MJPG":   ImageFormat.COLOR_MJPG,
+    "BGRA32": ImageFormat.COLOR_BGRA32,
+}
 
 # 运行时控制项（可在 main 中直接改）
 EXPOSURE_US = None
 AUTO_EXPOSURE = True
-SAVE_ALIGNED_DEPTH = True
 
 def init_config(config_path):
     with open(config_path, 'r', encoding='utf-8') as f:
@@ -34,14 +37,17 @@ def init_config(config_path):
     fps_str   = config_dict.get("camera_fps", "").split('_')[-1]          # "15"
     res_str   = config_dict.get("color_resolution", "").split('_')[-1]    # "720P"
     depth_str = "_".join(config_dict.get("depth_mode", "").split('_')[3:5])  # "NFOV_UNBINNED"
+    # MJPG 体积约为 BGRA32 的 1/10，且 Open3D 只能读取 MJPG 录制的 mkv
+    fmt_str   = config_dict.get("color_format", "K4A_IMAGE_FORMAT_COLOR_MJPG").split('_')[-1]  # "MJPG"
 
     fps_int  = int(fps_str)
     fps_enum = _FPS_MAP[fps_str]
     res_enum = _RES_MAP[res_str]
     dep_enum = _DEPTH_MAP[depth_str]
+    fmt_enum = _COLOR_FMT_MAP[fmt_str]
 
     print('=' * 80)
-    print(f"FPS={fps_int}  Resolution={res_str}  DepthMode={depth_str}")
+    print(f"FPS={fps_int}  Resolution={res_str}  DepthMode={depth_str}  ColorFormat={fmt_str}")
     print('=' * 80)
 
     if fps_int > 15 and "WFOV_UNBINNED" in depth_str:
@@ -51,8 +57,8 @@ def init_config(config_path):
         color_resolution=res_enum,
         depth_mode=dep_enum,
         camera_fps=fps_enum,
-        color_format=ImageFormat.COLOR_BGRA32,
-        synchronized_images_only=True, 
+        color_format=fmt_enum,
+        synchronized_images_only=config_dict.get("synchronized_images_only", True),
         wired_sync_mode=WiredSyncMode.STANDALONE,
     )
     return config, fps_int
@@ -66,7 +72,7 @@ def record(video_name, config, fps):
       video_name: 视频名称（不含扩展名）
       config: pyk4a.Config 对象
       fps: 帧率（整数）
-            曝光和对齐开关：在 main 中直接修改 EXPOSURE_US / AUTO_EXPOSURE / SAVE_ALIGNED_DEPTH
+    曝光开关：在 main 中直接修改 EXPOSURE_US / AUTO_EXPOSURE
     """
     os.makedirs("video", exist_ok=True)
     mkv_path = os.path.join("video", video_name.strip() + ".mkv")
@@ -102,7 +108,6 @@ def record(video_name, config, fps):
     print('=' * 80)
 
     imu_rows = []
-    aligned_saved = 0
 
     try:
         while True:
@@ -134,10 +139,8 @@ def record(video_name, config, fps):
                 })
 
             total_duration = time.time() - recording_start_time
-            status = f"\rFrame {frame_count:05d} | {total_duration:.2f}s | IMU samples: {len(imu_rows)}"
-            if SAVE_ALIGNED_DEPTH:
-                status += f" | Aligned depth: {aligned_saved}"
-            print(status, end="", flush=True)
+            print(f"\rFrame {frame_count:05d} | {total_duration:.2f}s | IMU samples: {len(imu_rows)}",
+                  end="", flush=True)
 
             elapsed = time.time() - start_time
             sleep_time = FRAME_DURATION - elapsed
@@ -148,10 +151,11 @@ def record(video_name, config, fps):
 
     except KeyboardInterrupt:
         print("\nStopping...")
-
-    recorder.flush()
-    recorder.close()
-    device.stop()
+    finally:
+        # 任何异常退出时也要关闭 mkv，否则文件尾不完整无法回放
+        recorder.flush()
+        recorder.close()
+        device.stop()
 
     # 将 IMU 数据写入 CSV
     if imu_rows:
@@ -175,8 +179,8 @@ if __name__ == "__main__":
     
     # 曝光设置选项（在这里修改）：
     # 选项 1: 手动曝光，单位微秒
-    # exposure_us = 2500   # 1 ms
-    # auto_exposure = False
+    # EXPOSURE_US = 2500   # 2.5 ms
+    # AUTO_EXPOSURE = False
     
     # 选项 2: 自动曝光
     EXPOSURE_US = None

@@ -5,14 +5,6 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "save_aligned_color_depth",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "save_aligned_color_depth.py",
-            "console": "integratedTerminal",
-            "args": ["-video-name", "000000"]
-        },
-        {
             "name": "test",
             "type": "debugpy",
             "request": "launch",
